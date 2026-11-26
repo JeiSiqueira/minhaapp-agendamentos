@@ -1,0 +1,147 @@
+# Deploy automático do frontend na VPS
+#
+# A cada push na branch main:
+#   1. build  -> gera a imagem de produção (Nginx com os arquivos do Vite)
+#                e publica no GitHub Container Registry (ghcr.io)
+#   2. deploy -> na VPS, em ~/agendamento (pasta criada pelo deploy da API),
+#                atualiza só o container "web" e espera o healthcheck
+#
+# O compose de produção fica no repositório da API (minhaapi-agendamentos):
+# faça o primeiro deploy da API antes do primeiro deploy do frontend.
+#
+# Rollback: Actions > Deploy Frontend > Run workflow, informando a tag (SHA de um commit).
+#
+# Secrets (Settings > Secrets and variables > Actions):
+#   VPS_HOST, VPS_USER, VPS_SSH_KEY   acesso SSH (mesmos valores da API e do portfólio)
+#   VPS_PORT, VPS_FINGERPRINT         opcionais
+name: Deploy Frontend
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag da imagem a publicar (SHA de um commit). Vazio = commit atual.'
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-agendamento-web
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/jeisiqueira/minhaapp-agendamentos
+  APP_DIR: agendamento
+  API_URL: https://api-agendamento.jeimilimendes.com.br
+
+jobs:
+  build:
+    name: Testes, build e push da imagem
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || inputs.tag == ''
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Testes
+        run: |
+          npm ci
+          npx vitest run --passWithNoTests
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Em PR só valida a compilação; em push publica a imagem
+      - name: Build (e push) da imagem
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: final
+          build-args: VITE_API_BASE_URL=${{ env.API_URL }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy na VPS
+    needs: build
+    if: always() && !failure() && !cancelled() && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://agendamento.jeimilimendes.com.br
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Define a tag da imagem
+        id: vars
+        run: echo "tag=${{ inputs.tag || github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Atualiza o frontend na VPS
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          IMAGE: ${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_DIR: ${{ env.APP_DIR }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          fingerprint: ${{ secrets.VPS_FINGERPRINT }}
+          envs: IMAGE,GHCR_USER,GHCR_TOKEN,APP_DIR
+          script: |
+            set -eu
+            cd "$HOME/$APP_DIR" 2>/dev/null && [ -f docker-compose.prod.yml ] || {
+              echo "ERRO: ~/$APP_DIR/docker-compose.prod.yml não existe. Faça antes o deploy da API." >&2
+              exit 1
+            }
+
+            # Versão em uso fica gravada no .env (reinícios do servidor mantêm a mesma imagem)
+            touch .env
+            if grep -q '^WEB_IMAGE=' .env; then
+              sed -i "s|^WEB_IMAGE=.*|WEB_IMAGE=$IMAGE|" .env
+            else
+              echo "WEB_IMAGE=$IMAGE" >> .env
+            fi
+
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            DC="docker compose -f docker-compose.prod.yml"
+            $DC pull web
+            $DC up -d --no-build --no-deps web
+            docker logout ghcr.io
+
+            CID=$($DC ps -q web)
+            STATUS=starting
+            for i in $(seq 1 20); do
+              STATUS=$(docker inspect -f '{{.State.Health.Status}}' "$CID" 2>/dev/null || echo starting)
+              [ "$STATUS" = "healthy" ] && break
+              sleep 2
+            done
+            echo "Status do frontend: $STATUS"
+            [ "$STATUS" = "healthy" ] || { $DC logs --tail 50 web; exit 1; }
+
+            docker image prune -af --filter "until=72h" > /dev/null
+            echo "Deploy concluído: $IMAGE"

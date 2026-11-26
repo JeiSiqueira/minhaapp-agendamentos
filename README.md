@@ -1,181 +1,59 @@
-# MinhaApp Agendamentos
+# MinhaApp — Agendamentos (Front-end)
 
-Sistema web de agendamento para salão de beleza desenvolvido com foco em
-boas práticas de frontend, integração com API REST e aplicação de regras
-reais de negócio.
+Interface web do sistema de agendamento para salão de beleza: o cliente cria a conta, entra e marca horários escolhendo serviço, profissional e data.
 
-O sistema permite que usuários realizem login, visualizem serviços,
-escolham profissionais e agendem horários de forma simples e segura.
+Construída em **React + TypeScript**, consumindo a API REST [minhaapi-agendamentos](https://github.com/JeiSiqueira/minhaapi-agendamentos) (.NET 8).
 
-------------------------------------------------------------------------
+## Funcionalidades
 
-##  Tecnologias Utilizadas
+- **Login, cadastro e "esqueci a senha"** (código de 6 dígitos enviado por e-mail)
+- **Sessão com JWT:** o token vai em todas as chamadas; se expirar, a pessoa volta para o login
+- **Agendamentos:** criar, remarcar e cancelar, com aviso quando o horário já está ocupado
+- **Datas no fuso de quem usa:** a API trabalha em UTC e a tela converte para o horário local
+- **Perfis:** clientes veem só os próprios agendamentos; administradores também mantêm serviços e profissionais
+- **Layout responsivo:** tabelas viram cartões no celular
 
-###  Frontend
+## Tecnologias
 
--   React
--   TypeScript
--   Vite
--   ESLint
--   CSS customizado
+| Uso | Biblioteca |
+| --- | --- |
+| Interface | React 18, TypeScript, Vite |
+| Estilo | Tailwind CSS |
+| Rotas | React Router |
+| Dados da API | Axios + TanStack Query (cache e recarga automática) |
+| Formulários | React Hook Form + Zod (validação) |
+| Testes | Vitest + Testing Library |
+| Produção | Docker (Nginx sem root), GitHub Actions |
 
-### 🔹 Conceitos Aplicados
+## Estrutura
 
--   Componentização
--   Hooks (`useState`, `useEffect`)
--   Consumo de API REST com `fetch`
--   Manipulação de datas e horários (UTC → GMT-3)
--   Persistência de sessão com `localStorage`
--   Validação de formulários
--   Controle de estado via props
-
-------------------------------------------------------------------------
-
-##  Arquitetura do Projeto
-
-    src/
-     ├── App.tsx
-     ├── main.tsx
-     └── components/
-          ├── Login
-          ├── Servicos
-          ├── FormAgendamento
-          ├── ListaAgendamentos
-          ├── Header
-          └── Footer
-
-A aplicação é baseada em arquitetura componentizada, separando
-responsabilidades entre visualização, lógica e integração com API.
-
-------------------------------------------------------------------------
-
-## Componentes Principais
-
-### Login
-
--   Autenticação simples do usuário
--   Persistência de sessão via `localStorage`
--   Controle de estado de usuário logado
-
-### Servicos
-
--   Lista serviços vindos da API
--   Exibe nome, duração e preço
--   Permite seleção de serviço
--   Scroll automático até o formulário de agendamento
-
-### FormAgendamento
-
-Responsável por: - Captura de dados do cliente - Seleção de serviço e
-profissional - Escolha de data e horário - Validação de dados - Envio
-para API - Exibição de modal de sucesso - Controle de loading
-
-Validações implementadas: - Nome obrigatório (máx. 150 caracteres) -
-E-mail válido (regex) - Telefone mínimo de 10 dígitos - Serviço
-obrigatório - Profissional obrigatório - Data obrigatória - Não permite
-datas passadas - Para o dia atual, horário deve ser pelo menos 1 hora à
-frente
-
-###  ListaAgendamentos
-
--   Busca todos os agendamentos da API
--   Filtra apenas os do usuário logado
--   Conversão automática de UTC para GMT-3
--   Exibe serviço, data formatada, cliente e profissional
-
-###  Header e Footer
-
--   Controle de sessão
--   Logout
--   Informações institucionais
-
-------------------------------------------------------------------------
-
-##  Integração com API
-
-### Serviços
-
-GET /servicos
-
-### Profissionais
-
-GET /profissionais
-
-### Agendamentos
-
-GET /agendamentos\
-POST /agendamentos
-
-### Exemplo de Payload Enviado
-
-``` json
-{
-  "usuarioId": "1",
-  "servicoId": 2,
-  "profissionalId": 3,
-  "data": "2026-02-20T15:00:00.000Z"
-}
+```
+src/
+├── api/          cliente HTTP (token JWT) e hooks de consulta à API
+├── auth/         sessão, contexto de login e proteção de rotas
+├── components/   botões, campos, tabela, modal e alertas reutilizáveis
+├── features/     telas: auth, dashboard, agendamentos, serviços, profissionais
+├── types/        tipos dos dados da API
+└── utils/        datas (UTC ↔ local), preço e nomes
 ```
 
-------------------------------------------------------------------------
+## Como executar
 
-##  Regras de Negócio Implementadas
+Pré-requisitos: Node.js 20+ e a [API](https://github.com/JeiSiqueira/minhaapi-agendamentos) rodando (com Docker: `docker compose up --build` no repositório da API).
 
-Validação completa de formulário\
-Controle de sessão do usuário\
-Exibição apenas dos agendamentos do usuário logado\
-Conversão de fuso horário\
-Bloqueio de datas passadas\
-Restrição de horário mínimo para o mesmo dia
+```bash
+npm install
+cp .env.example .env    # VITE_API_BASE_URL=http://localhost:5138
+npm run dev             # http://localhost:5173
+```
 
-------------------------------------------------------------------------
+Outros comandos: `npm run build` (gera `dist/`) e `npm test`.
 
-##  Como Rodar o Projeto
+## Deploy
 
-###  Clonar o repositório
+A cada push na `main`, o workflow [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) gera a imagem Docker (com o endereço público da API embutido no build), publica no GitHub Container Registry e atualiza o container na VPS. O HTTPS fica a cargo do proxy reverso (Caddy).
 
-    git clone https://github.com/seuusuario/minhaapp-agendamentos.git
+## Autora
 
-###  Instalar dependências
-
-    npm install
-
-###  Rodar ambiente de desenvolvimento
-
-    npm run dev
-
-###  Gerar build de produção
-
-    npm run build
-
-------------------------------------------------------------------------
-
-##  Objetivo do Projeto
-
-Este projeto foi desenvolvido com foco em:
-
--   Praticar integração frontend + backend
--   Aplicar regras reais de negócio
--   Simular sistema comercial de agendamento
--   Fortalecer portfólio para vagas de estágio/júnior
-
-------------------------------------------------------------------------
-
-##  Melhorias Futuras
-
--   Autenticação com JWT
--   Controle de disponibilidade por profissional
--   Cancelamento de agendamento
--   Painel administrativo
--   Paginação
--   Filtro por data
--   Integração com gateway de pagamento
--   Testes automatizados
-
-------------------------------------------------------------------------
-
-##  Autor
-
-Jei Siqueira\
-Desenvolvedor Full Stack em formação\
-Foco em React, TypeScript e APIs REST
+**Jeimili Siqueira Mendes**
+[GitHub](https://github.com/JeiSiqueira) · [LinkedIn](https://www.linkedin.com/in/jeimili-siqueira)
